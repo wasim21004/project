@@ -125,7 +125,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     return combined;
   };
 
-  const handleAddTask = async () => {
+ const handleAddTask = async () => {
   if (!taskTitle.trim()) {
     Alert.alert('Error', 'Please enter a task title');
     return;
@@ -142,23 +142,34 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
   };
 
   try {
-    // 🔹 Save to local DB
+    // 🔹 Save locally first
     const savedTask = await TaskService.addTask(newTask);
 
-    // 🔹 Notify parent (to update UI in-memory list)
+    // 🔹 Push to backend
+    try {
+      await fetch('http://localhost:5000/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(savedTask),
+      });
+    } catch (err) {
+      console.warn('Failed to sync task with backend', err);
+    }
+
+    // 🔹 Notify parent UI
     onAddTask(savedTask);
 
-    // 🔹 If scheduled, push to Calendar
+    // 🔹 Add to Calendar if scheduled
     if (isScheduled && scheduledDateTime) {
       try {
         await CalendarService.addEvent(
-          newTask.title,
-          newTask.description,
+          savedTask.title,
+          savedTask.description,
           scheduledDateTime.toISOString()
         );
         Alert.alert(
           '✅ Added to Calendar',
-          `${newTask.title} on ${formatDate(scheduledDateTime)} at ${formatTime(scheduledDateTime)}`
+          `${savedTask.title} on ${formatDate(scheduledDateTime)} at ${formatTime(scheduledDateTime)}`
         );
       } catch (e) {
         Alert.alert('⚠️ Failed to add to Calendar', String(e));
@@ -170,6 +181,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     Alert.alert('Error', 'Failed to save task');
   }
 };
+
 
   // Recording logic (mock transcription)
   const startRecording = async () => {
