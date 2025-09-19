@@ -9,16 +9,12 @@ import {
   Animated,
   Platform,
   ScrollView,
-  PermissionsAndroid,
 } from 'react-native';
 import Modal from 'react-native-modal';
-import { X, Mic, MicOff, Calendar, Flag, Clock, ChevronDown } from 'lucide-react-native';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import AudioRecorderPlayer from 'react-native-audio-recorder-player';
+import { X, Mic, MicOff, Flag } from 'lucide-react-native';
+import { Audio } from 'expo-av';
 import CalendarService from "../services/CalendarService";
 import TaskService from '../services/TaskServices';
-
-const audioRecorderPlayer = new AudioRecorderPlayer();
 
 interface Task {
   id: string;
@@ -43,40 +39,28 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
   const [isScheduled, setIsScheduled] = useState(false);
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [selectedTime, setSelectedTime] = useState(new Date());
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [glowAnim] = useState(new Animated.Value(0));
-
-  // ------------------ Permissions ------------------
-  const requestMicrophonePermission = async () => {
-    if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: 'Microphone Permission',
-          message: 'App needs access to your microphone to record tasks.',
-          buttonPositive: 'OK',
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    }
-    return true; // iOS handles via plist automatically
-  };
+  const recordingRef = React.useRef<Audio.Recording | null>(null);
 
   // ------------------ Recording ------------------
   const startRecording = async () => {
     try {
-      const hasPermission = await requestMicrophonePermission();
-      if (!hasPermission) {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
         Alert.alert('Permission Denied', 'Microphone access is required');
         return;
       }
 
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
+      await recording.startAsync();
+
+      recordingRef.current = recording;
       setIsRecording(true);
-      const result = await audioRecorderPlayer.startRecorder();
-      console.log('Recording started at', result);
     } catch (err) {
       console.error('Failed to start recording', err);
     }
@@ -84,12 +68,16 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
 
   const stopRecording = async () => {
     try {
-      const result = await audioRecorderPlayer.stopRecorder();
-      audioRecorderPlayer.removeRecordBackListener();
-      setIsRecording(false);
-      console.log('Recording stopped. File path:', result);
+      if (!recordingRef.current) return;
 
-      // 🔹 Replace with real transcription API
+      await recordingRef.current.stopAndUnloadAsync();
+      const uri = recordingRef.current.getURI();
+      setIsRecording(false);
+      recordingRef.current = null;
+
+      console.log('Recording stopped. File path:', uri);
+
+      // Mock transcription, replace with real API
       const mockTranscription = 'Meeting with John Friday at 2 PM';
       setTaskTitle(mockTranscription);
       setIsScheduled(true);
@@ -102,7 +90,6 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
       const twoPM = new Date();
       twoPM.setHours(14, 0, 0, 0);
       setSelectedTime(twoPM);
-
     } catch (err) {
       console.error('Failed to stop recording', err);
       setIsRecording(false);
@@ -123,17 +110,14 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
           Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
         ])
       );
-
       const glowAnimation = Animated.loop(
         Animated.sequence([
           Animated.timing(glowAnim, { toValue: 1, duration: 1000, useNativeDriver: false }),
           Animated.timing(glowAnim, { toValue: 0, duration: 1000, useNativeDriver: false }),
         ])
       );
-
       pulseAnimation.start();
       glowAnimation.start();
-
       return () => {
         pulseAnimation.stop();
         glowAnimation.stop();
@@ -149,8 +133,6 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     setIsScheduled(false);
     setSelectedDate(new Date());
     setSelectedTime(new Date());
-    setShowDatePicker(false);
-    setShowTimePicker(false);
   };
 
   const handleClose = () => {
@@ -186,16 +168,6 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     try {
       const savedTask = await TaskService.addTask(newTask);
 
-      try {
-        await fetch('http://192.168.1.3:5000/tasks', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(savedTask),
-        });
-      } catch (err) {
-        console.warn('Failed to sync task with backend', err);
-      }
-
       onAddTask(savedTask);
 
       if (isScheduled && scheduledDateTime) {
@@ -229,16 +201,6 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     }
   };
 
-  const onDateChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') setShowDatePicker(false);
-    if (date) setSelectedDate(date);
-  };
-
-  const onTimeChange = (event: any, time?: Date) => {
-    if (Platform.OS === 'android') setShowTimePicker(false);
-    if (time) setSelectedTime(time);
-  };
-
   // ------------------ Render ------------------
   return (
     <Modal
@@ -266,16 +228,12 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
             <Text style={styles.sectionLabel}>Voice Input</Text>
             <View style={styles.voiceContainer}>
               <Animated.View
-                style={[
-                  styles.voiceButtonContainer,
-                  {
-                    transform: [{ scale: pulseAnim }],
-                    shadowColor: '#3B82F6',
-                    shadowOpacity: glowAnim,
-                    shadowRadius: Animated.multiply(glowAnim, 15),
-                    elevation: isRecording ? 8 : 4,
-                  },
-                ]}
+                style={[styles.voiceButtonContainer, {
+                  transform: [{ scale: pulseAnim }],
+                  shadowOpacity: glowAnim,
+                  shadowRadius: Animated.multiply(glowAnim, 15),
+                  elevation: isRecording ? 8 : 4,
+                }]}
               >
                 <TouchableOpacity
                   style={[styles.voiceButton, { backgroundColor: isRecording ? '#EF4444' : '#3B82F6' }]}
@@ -341,6 +299,8 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     </Modal>
   );
 }
+
+// Keep all your styles as before
 
 // Keep your styles as-is
 

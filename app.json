@@ -1,5 +1,18 @@
 {
   "expo": {
+    "android": {
+      "enableNewArchitecture": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "package": "com.anonymous.boltexponativewind"
+    },
+    "ios": {
+      "enableNewArchitecture": false
+    },
     "name": "bolt-expo-nativewind",
     "slug": "bolt-expo-nativewind",
     "version": "1.0.0",
@@ -8,9 +21,6 @@
     "scheme": "myapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "ios": {
-      "supportsTablet": true
-    },
     "web": {
       "bundler": "metro",
       "output": "single",
@@ -20,9 +30,12 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
-      ["expo-audio", {
-        "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
-      }],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone"
+        }
+      ],
       "expo-video"
     ],
     "experiments": {

@@ -9,16 +9,10 @@ import {
   Animated,
   Platform,
   ActivityIndicator,
-  PermissionsAndroid,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Bell } from "lucide-react-native";
-import AudioRecorderPlayer from "react-native-audio-recorder-player";
-import { check, request, PERMISSIONS, RESULTS } from "react-native-permissions";
-
-// Initialize recorder
-const audioRecorderPlayer = new AudioRecorderPlayer();
-const BACKEND_URL = "http://192.168.1.3:5000"; // <-- Change to your backend IP
+import { Audio } from "expo-av";
 
 // Top Navigation Bar
 const TopNavBar = ({ title, onNotificationsPress }) => (
@@ -30,12 +24,15 @@ const TopNavBar = ({ title, onNotificationsPress }) => (
   </View>
 );
 
-export default function VoiceTodoApp() {
+const BACKEND_URL = "http://192.168.1.3:5000";
+
+export default function HomeScreen() {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [tasks, setTasks] = useState([]);
-  const [recordedUri, setRecordedUri] = useState(null);
+  const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const recordingRef = useRef<Audio.Recording | null>(null);
 
   // -------------------- Fetch Tasks --------------------
   useEffect(() => {
@@ -70,38 +67,19 @@ export default function VoiceTodoApp() {
     };
   }, [isRecording]);
 
-  // -------------------- Permissions --------------------
-  const requestMicrophonePermission = async () => {
-    if (Platform.OS === "android") {
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-        {
-          title: "Microphone Permission",
-          message: "This app needs access to your microphone to record tasks.",
-          buttonPositive: "OK",
-        }
-      );
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } else if (Platform.OS === "ios") {
-      const result = await request(PERMISSIONS.IOS.MICROPHONE);
-      return result === RESULTS.GRANTED;
-    }
-    return true; // web
-  };
-
   // -------------------- Start Recording --------------------
   const startRecording = async () => {
     try {
-      const hasPermission = await requestMicrophonePermission();
-      if (!hasPermission) {
-        Alert.alert("Permission Required", "Enable microphone access.");
-        return;
-      }
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
 
-      const result = await audioRecorderPlayer.startRecorder();
+      const recording = new Audio.Recording();
+      await recording.prepareToRecordAsync(Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY);
+      await recording.startAsync();
+
+      recordingRef.current = recording;
       setIsRecording(true);
       setRecordedUri(null);
-      console.log("Recording started:", result);
     } catch (err) {
       console.error("startRecording error:", err);
       Alert.alert("Error", err.message);
@@ -109,43 +87,47 @@ export default function VoiceTodoApp() {
   };
 
   // -------------------- Stop Recording --------------------
-  const stopRecordingAndProcess = async () => {
-    try {
-      const result = await audioRecorderPlayer.stopRecorder();
-      await audioRecorderPlayer.removeRecordBackListener();
-      setIsRecording(false);
-      setRecordedUri(result);
-      console.log("Recording stopped, URI:", result);
+const stopRecordingAndProcess = async () => {
+  try {
+    if (!recordingRef.current) return;
 
-      setIsProcessing(true);
+    await recordingRef.current.stopAndUnloadAsync();
+    const uri = recordingRef.current.getURI();
+    setRecordedUri(uri);
+    setIsRecording(false);
+    recordingRef.current = null;
 
-      const formData = new FormData();
-      formData.append("audio", {
-        uri: result,
-        name: `recording.${Platform.OS === "ios" ? "caf" : "m4a"}`,
-        type: Platform.OS === "ios" ? "audio/x-caf" : "audio/m4a",
-      });
+    console.log("Recording URI:", uri);
 
-      const response = await fetch(`${BACKEND_URL}/process-voice`, {
-        method: "POST",
-        body: formData,
-        headers: { Accept: "application/json" },
-      });
+    setIsProcessing(true);
 
-      if (!response.ok) throw new Error(await response.text());
-      const backendResult = await response.json();
-      console.log("Backend response:", backendResult);
+    // Convert file:// URI to blob
+    const fileResponse = await fetch(uri);
+    const blob = await fileResponse.blob();
 
-      Alert.alert("Success", backendResult.transcription || "Task added", [
-        { text: "OK", onPress: fetchTasks },
-      ]);
-    } catch (err) {
-      console.error("stopRecording error:", err);
-      Alert.alert("Error", err.message);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    const formData = new FormData();
+    formData.append("audio", blob, `recording.${Platform.OS === "ios" ? "caf" : "3gp"}`);
+
+    const response = await fetch(`${BACKEND_URL}/process-voice`, {
+      method: "POST",
+      body: formData,
+      headers: { Accept: "application/json" }, // Don't set Content-Type manually!
+    });
+
+    if (!response.ok) throw new Error(await response.text());
+    const backendResult = await response.json();
+
+    Alert.alert("Success", backendResult.transcription || "Task added", [
+      { text: "OK", onPress: fetchTasks },
+    ]);
+  } catch (err) {
+    console.error("stopRecording error:", err);
+    Alert.alert("Error", err.message);
+  } finally {
+    setIsProcessing(false);
+  }
+};
+
 
   // -------------------- Button Handler --------------------
   const handleRecordPress = async () => {

@@ -2,7 +2,9 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const bodyParser = require("body-parser");
-
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -38,7 +40,43 @@ const Task = mongoose.model("Task", TaskSchema);
 const CalendarEvent = mongoose.model("CalendarEvent", CalendarEventSchema);
 
 // ----- Routes -----
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(__dirname, "uploads");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir);
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `recording-${Date.now()}${ext}`);
+  },
+});
+const upload = multer({ storage });
 
+// ---------------- Routes ----------------
+
+// Process voice endpoint
+app.post("/process-voice", upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No audio file uploaded" });
+
+    const audioPath = req.file.path;
+    console.log("Received audio file:", audioPath);
+
+    // 🔹 MOCK transcription (replace with real API)
+    const mockTranscription = "Meeting with John Friday at 2 PM";
+
+    // Optionally: delete uploaded file after processing
+    fs.unlink(audioPath, (err) => {
+      if (err) console.error("Failed to delete uploaded audio:", err);
+    });
+
+    res.json({ transcription: mockTranscription });
+  } catch (err) {
+    console.error("process-voice error:", err);
+    res.status(500).json({ error: "Failed to process audio" });
+  }
+});
 // Get all tasks
 app.get("/tasks", async (req, res) => {
   try {
