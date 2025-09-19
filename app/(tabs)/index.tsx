@@ -1,282 +1,269 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Animated, Alert, Platform 
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Mic, MicOff, Calendar, Clock, CircleCheck as CheckCircle2 } from 'lucide-react-native';
-import { Audio } from 'expo-av';
-import TopNavBar from '@/components/TopNavBar';
-import AddTaskModal from '@/components/AddTaskModal';
-import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
+import React, { useState, useEffect, useRef } from "react";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  FlatList,
+  Animated,
+  Platform,
+  ActivityIndicator,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Audio } from "expo-av";
+import { Bell } from "lucide-react-native";
 
-interface CalendarEvent {
-  id: string;
-  title: string;
-  time: string;
-  duration: string;
-  color: string;
-}
+const BACKEND_URL = "http://localhost:5000"; // <-- Change to your backend IP
 
-interface Task {
-  id: string;
-  title: string;
-  completed: boolean;
-  priority: 'high' | 'medium' | 'low';
-  scheduled?: boolean;
-  scheduledDate?: string;
-}
+// TopNavBar Component
+const TopNavBar = ({ title, onNotificationsPress }) => (
+  <View style={styles.topNavBar}>
+    <Text style={styles.navTitle}>{title}</Text>
+    <TouchableOpacity
+      style={styles.notificationButton}
+      onPress={onNotificationsPress}
+    >
+      <Bell size={24} color="#6B7280" />
+    </TouchableOpacity>
+  </View>
+);
 
-export default function HomeScreen() {
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
+export default function VoiceTodoApp() {
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [pulseAnim] = useState(new Animated.Value(1));
-  const [glowAnim] = useState(new Animated.Value(0));
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [todayEvents, setTodayEvents] = useState<CalendarEvent[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  const [fontsLoaded] = useFonts({
-    'Inter-Regular': Inter_400Regular,
-    'Inter-SemiBold': Inter_600SemiBold,
-    'Inter-Bold': Inter_700Bold,
-  });
-
-  // Fetch tasks from backend
-  const fetchTasks = async () => {
-    try {
-      const res = await fetch('http://localhost:5000/tasks');
-      const data = await res.json();
-      setTasks(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Fetch today's events from backend
-  const fetchTodayEvents = async () => {
-    try {
-      const res = await fetch('http://localhost:5000/calendar/today');
-      const data = await res.json();
-      setTodayEvents(data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
+  // -------------------- Fetch Tasks --------------------
   useEffect(() => {
     fetchTasks();
-    fetchTodayEvents();
   }, []);
 
-  const addTask = async (newTask: Omit<Task, 'id' | 'completed'>) => {
+  const fetchTasks = async () => {
     try {
-      const res = await fetch('http://localhost:5000/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newTask),
-      });
+      const res = await fetch(`${BACKEND_URL}/tasks`);
       const data = await res.json();
-      setTasks(prev => [...prev, data.task]);
-      Alert.alert('Task added', `"${newTask.title}" has been added.`);
+      setTasks(Array.isArray(data) ? data : []);
     } catch (err) {
-      console.error(err);
-      Alert.alert('Error', 'Failed to add task.');
+      console.error("fetchTasks error:", err);
+      Alert.alert("Error", "Failed to fetch tasks. Check backend.");
     }
   };
 
-  const pendingTasks = tasks.filter(task => !task.completed && !task.scheduled);
-
+  // -------------------- Pulse Animation --------------------
   useEffect(() => {
+    let pulseAnimation;
     if (isRecording) {
-      const pulseAnimation = Animated.loop(
+      pulseAnimation = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 800,
+            useNativeDriver: true,
+          }),
         ])
       );
-
-      const glowAnimation = Animated.loop(
-        Animated.sequence([
-          Animated.timing(glowAnim, { toValue: 1, duration: 1000, useNativeDriver: false }),
-          Animated.timing(glowAnim, { toValue: 0, duration: 1000, useNativeDriver: false }),
-        ])
-      );
-
       pulseAnimation.start();
-      glowAnimation.start();
-
-      return () => {
-        pulseAnimation.stop();
-        glowAnimation.stop();
-      };
     }
+    return () => {
+      if (pulseAnimation) pulseAnimation.stop();
+    };
   }, [isRecording]);
 
+  // -------------------- Permissions --------------------
+  const requestMicrophonePermission = async () => {
+    if (Platform.OS === "web") return true;
+    const { status } = await Audio.requestPermissionsAsync();
+    return status === "granted";
+  };
+
+  // -------------------- Start Recording --------------------
   const startRecording = async () => {
     try {
-      if (Platform.OS === 'web') {
+      if (Platform.OS === "web") {
         setIsRecording(true);
         setTimeout(() => {
           setIsRecording(false);
-          Alert.alert('Voice Command Processed', 'Task added via backend MCP');
-        }, 3000);
+          Alert.alert("Web Simulation", "Recording simulated.");
+        }, 2000);
         return;
       }
 
-      const permission = await Audio.requestPermissionsAsync();
-      if (permission.status !== 'granted') return;
+      const hasPermission = await requestMicrophonePermission();
+      if (!hasPermission) {
+        Alert.alert("Permission Required", "Enable microphone access.");
+        return;
+      }
 
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecording(recording);
-      setIsRecording(true);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!recording) {
-      setIsRecording(false);
-      return;
-    }
-
-    setIsRecording(false);
-    await recording.stopAndUnloadAsync();
-    const uri = recording.getURI();
-
-    // Send recording URI or transcription to backend MCP
-    try {
-      const formData = new FormData();
-      // @ts-ignore
-      formData.append('audio', { uri, name: 'recording.wav', type: 'audio/wav' });
-      const res = await fetch('http://localhost:5000/process-voice', {
-        method: 'POST',
-        body: formData,
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
       });
-      const data = await res.json();
-      Alert.alert('Voice Command Processed', data.message);
-      fetchTasks(); // Refresh tasks
+
+      const { recording: newRecording } = await Audio.Recording.createAsync(
+        Audio.RECORDING_OPTIONS_PRESET_HIGH_QUALITY
+      );
+
+      setRecording(newRecording);
+      setIsRecording(true);
+      console.log("Recording started...");
     } catch (err) {
-      console.error(err);
-      Alert.alert('Error', 'Failed to process voice command.');
+      console.error("startRecording error:", err);
+      Alert.alert("Error", err.message);
     }
   };
 
-  const toggleRecording = () => {
-    if (isRecording) stopRecording();
-    else setShowAddModal(true);
-  };
+  // -------------------- Stop Recording --------------------
+  const stopRecordingAndProcess = async () => {
+    try {
+      if (!recording) return;
+      console.log("Stopping recording...");
 
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'high': return '#EF4444';
-      case 'medium': return '#F59E0B';
-      case 'low': return '#10B981';
-      default: return '#6B7280';
+      await recording.stopAndUnloadAsync();
+      const uri = recording.getURI();
+      setIsRecording(false);
+
+      if (!uri) throw new Error("No recording URI found");
+
+      setIsProcessing(true);
+
+      const formData = new FormData();
+      formData.append("audio", {
+        uri,
+        name: `recording.${Platform.OS === "ios" ? "caf" : "m4a"}`,
+        type: Platform.OS === "ios" ? "audio/x-caf" : "audio/m4a",
+      } as any);
+
+      const response = await fetch(`${BACKEND_URL}/process-voice`, {
+        method: "POST",
+        body: formData,
+        headers: { Accept: "application/json" },
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = await response.json();
+      console.log("Backend response:", result);
+
+      Alert.alert("Success", result.transcription || "Task added", [
+        { text: "OK", onPress: fetchTasks },
+      ]);
+    } catch (err) {
+      console.error("stopRecording error:", err);
+      Alert.alert("Error", err.message);
+    } finally {
+      setIsProcessing(false);
+      setRecording(null);
     }
   };
 
-  if (!fontsLoaded) return null;
+  // -------------------- Button Handler --------------------
+  const handleRecordPress = async () => {
+    if (isRecording) {
+      await stopRecordingAndProcess();
+    } else {
+      await startRecording();
+    }
+  };
+
+  // -------------------- Render Task --------------------
+  const renderTask = ({ item }) => (
+    <View style={styles.taskItem}>
+      <Text style={styles.taskTitle}>{item.title}</Text>
+      {item.scheduledTime && (
+        <Text style={styles.taskTime}>
+          {new Date(item.scheduledTime).toLocaleString()}
+        </Text>
+      )}
+      {item.completed && <Text style={styles.completedText}>✓ Completed</Text>}
+    </View>
+  );
 
   return (
     <SafeAreaView style={styles.container}>
-      <TopNavBar 
-        title="TODOist" 
-        showSearch={true}
-        onSearchPress={() => Alert.alert('Search', 'Search functionality coming soon!')}
-        onNotificationsPress={() => Alert.alert('Notifications', 'You have 3 pending reminders')}
+      <TopNavBar
+        title="TODOise"
+        onNotificationsPress={() => Alert.alert("Notifications", "No new alerts")}
       />
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        <View style={styles.header}>
-          <Text style={styles.greeting}>Good morning!</Text>
-          <Text style={styles.date}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+
+      <View style={styles.content}>
+        <Text style={styles.title}>Voice TODO</Text>
+        <Text style={styles.subtitle}>Tap to record your task</Text>
+
+        <Animated.View
+          style={{ transform: [{ scale: isRecording ? pulseAnim : 1 }] }}
+        >
+          <TouchableOpacity
+            style={[styles.recordButton, { backgroundColor: isRecording ? "#EF4444" : "#3B82F6" }]}
+            onPress={handleRecordPress}
+            disabled={isProcessing}
+            activeOpacity={0.8}
+          >
+            {isProcessing ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.recordButtonText}>
+                {isRecording ? "Stop & Save" : "Record Task"}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+
+        <View style={styles.tasksSection}>
+          <Text style={styles.sectionTitle}>Your Tasks ({tasks.length})</Text>
+          {tasks.length === 0 ? (
+            <Text style={styles.emptyStateText}>No tasks yet</Text>
+          ) : (
+            <FlatList
+              data={tasks}
+              keyExtractor={(item) => item._id || item.id}
+              renderItem={renderTask}
+              contentContainerStyle={styles.tasksList}
+            />
+          )}
         </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Calendar size={20} color="#3B82F6" />
-            <Text style={styles.sectionTitle}>Today's Schedule</Text>
-          </View>
-          
-          {todayEvents.map((event) => (
-            <View key={event.id} style={styles.eventCard}>
-              <View style={[styles.eventColorBar, { backgroundColor: event.color }]} />
-              <View style={styles.eventContent}>
-                <Text style={styles.eventTitle}>{event.title}</Text>
-                <View style={styles.eventMeta}>
-                  <Clock size={14} color="#6B7280" />
-                  <Text style={styles.eventTime}>{event.time}</Text>
-                  <Text style={styles.eventDuration}>• {event.duration}</Text>
-                </View>
-              </View>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <CheckCircle2 size={20} color="#3B82F6" />
-            <Text style={styles.sectionTitle}>Pending Tasks</Text>
-          </View>
-          
-          {pendingTasks.map((task) => (
-            <View key={task.id} style={styles.taskCard}>
-              <View style={styles.taskContent}>
-                <View style={styles.taskHeader}>
-                  <Text style={styles.taskTitle}>{task.title}</Text>
-                  <View style={[styles.priorityBadge, { backgroundColor: getPriorityColor(task.priority) + '20' }]}>
-                    <Text style={[styles.priorityText, { color: getPriorityColor(task.priority) }]}>
-                      {task.priority}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-            </View>
-          ))}
-        </View>
-      </ScrollView>
-
-      <Animated.View style={[
-        styles.micButtonContainer,
-        { transform: [{ scale: pulseAnim }], shadowColor: '#3B82F6', shadowOpacity: glowAnim, shadowRadius: Animated.multiply(glowAnim, 20), elevation: isRecording ? 8 : 4 }
-      ]}>
-        <TouchableOpacity style={[styles.micButton, { backgroundColor: isRecording ? '#EF4444' : '#3B82F6' }]} onPress={toggleRecording} activeOpacity={0.8}>
-          {isRecording ? <MicOff size={28} color="#FFFFFF" /> : <Mic size={28} color="#FFFFFF" />}
-        </TouchableOpacity>
-      </Animated.View>
-
-      <AddTaskModal
-        isVisible={showAddModal}
-        onClose={() => setShowAddModal(false)}
-        onAddTask={addTask}
-      />
+      </View>
     </SafeAreaView>
   );
 }
 
+// -------------------- Styles --------------------
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8FAFC' },
-  content: { flex: 1, paddingHorizontal: 20 },
-  header: { marginTop: 10, marginBottom: 30 },
-  greeting: { fontSize: 28, fontFamily: 'Inter-Bold', color: '#1F2937', marginBottom: 4 },
-  date: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#6B7280' },
-  section: { marginBottom: 32 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
-  sectionTitle: { fontSize: 18, fontFamily: 'Inter-SemiBold', color: '#1F2937', marginLeft: 8 },
-  eventCard: { backgroundColor: '#FFFFFF', borderRadius: 12, marginBottom: 12, flexDirection: 'row', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
-  eventColorBar: { width: 4, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 },
-  eventContent: { flex: 1, padding: 16 },
-  eventTitle: { fontSize: 16, fontFamily: 'Inter-SemiBold', color: '#1F2937', marginBottom: 8 },
-  eventMeta: { flexDirection: 'row', alignItems: 'center' },
-  eventTime: { fontSize: 14, fontFamily: 'Inter-Regular', color: '#6B7280', marginLeft: 4 },
-  eventDuration: { fontSize: 14, fontFamily: 'Inter-Regular', color: '#9CA3AF', marginLeft: 4 },
-  taskCard: { backgroundColor: '#FFFFFF', borderRadius: 12, marginBottom: 12, padding: 16, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 2 },
-  taskContent: { flex: 1 },
-  taskHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  taskTitle: { fontSize: 16, fontFamily: 'Inter-Regular', color: '#1F2937', flex: 1, marginRight: 12 },
-  priorityBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  priorityText: { fontSize: 12, fontFamily: 'Inter-SemiBold', textTransform: 'uppercase' },
-  micButtonContainer: { position: 'absolute', bottom: 100, right: 20, shadowOffset: { width: 0, height: 4 }, shadowRadius: 10 },
-  micButton: { width: 64, height: 64, borderRadius: 32, justifyContent: 'center', alignItems: 'center' },
+  container: { flex: 1, backgroundColor: "#F8FAFC" },
+  topNavBar: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 16,
+    backgroundColor: "#FFF",
+  },
+  navTitle: { fontSize: 22, fontWeight: "700", color: "#1F2937" },
+  notificationButton: { padding: 8 },
+  content: { flex: 1, padding: 20 },
+  title: { fontSize: 28, fontWeight: "700", textAlign: "center", marginVertical: 12 },
+  subtitle: { fontSize: 16, color: "#6B7280", textAlign: "center", marginBottom: 20 },
+  recordButton: {
+    width: 180,
+    height: 70,
+    borderRadius: 35,
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "center",
+    marginBottom: 30,
+  },
+  recordButtonText: { color: "#FFF", fontSize: 18, fontWeight: "600" },
+  tasksSection: { flex: 1 },
+  sectionTitle: { fontSize: 20, fontWeight: "600", marginBottom: 12 },
+  tasksList: { paddingBottom: 20 },
+  taskItem: { backgroundColor: "#FFF", padding: 16, borderRadius: 10, marginBottom: 12 },
+  taskTitle: { fontSize: 16, fontWeight: "600" },
+  taskTime: { fontSize: 14, color: "#6B7280", marginTop: 4 },
+  completedText: { color: "#10B981", marginTop: 4, fontWeight: "500" },
+  emptyStateText: { textAlign: "center", color: "#9CA3AF", marginTop: 40, fontSize: 16 },
 });
