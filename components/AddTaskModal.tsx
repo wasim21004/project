@@ -9,13 +9,17 @@ import {
   Animated,
   Platform,
   ScrollView,
+  PermissionsAndroid,
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { X, Mic, MicOff, Calendar, Flag, Clock, ChevronDown } from 'lucide-react-native';
-import { Audio } from 'expo-av';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import AudioRecorderPlayer from 'react-native-audio-recorder-player';
 import CalendarService from "../services/CalendarService";
 import TaskService from '../services/TaskServices';
+
+const audioRecorderPlayer = new AudioRecorderPlayer();
+
 interface Task {
   id: string;
   title: string;
@@ -42,11 +46,75 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [glowAnim] = useState(new Animated.Value(0));
 
-  // Animations for recording mic
+  // ------------------ Permissions ------------------
+  const requestMicrophonePermission = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        {
+          title: 'Microphone Permission',
+          message: 'App needs access to your microphone to record tasks.',
+          buttonPositive: 'OK',
+        }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return true; // iOS handles via plist automatically
+  };
+
+  // ------------------ Recording ------------------
+  const startRecording = async () => {
+    try {
+      const hasPermission = await requestMicrophonePermission();
+      if (!hasPermission) {
+        Alert.alert('Permission Denied', 'Microphone access is required');
+        return;
+      }
+
+      setIsRecording(true);
+      const result = await audioRecorderPlayer.startRecorder();
+      console.log('Recording started at', result);
+    } catch (err) {
+      console.error('Failed to start recording', err);
+    }
+  };
+
+  const stopRecording = async () => {
+    try {
+      const result = await audioRecorderPlayer.stopRecorder();
+      audioRecorderPlayer.removeRecordBackListener();
+      setIsRecording(false);
+      console.log('Recording stopped. File path:', result);
+
+      // 🔹 Replace with real transcription API
+      const mockTranscription = 'Meeting with John Friday at 2 PM';
+      setTaskTitle(mockTranscription);
+      setIsScheduled(true);
+
+      const nextFriday = new Date();
+      const daysUntilFriday = (5 - nextFriday.getDay() + 7) % 7 || 7;
+      nextFriday.setDate(nextFriday.getDate() + daysUntilFriday);
+      setSelectedDate(nextFriday);
+
+      const twoPM = new Date();
+      twoPM.setHours(14, 0, 0, 0);
+      setSelectedTime(twoPM);
+
+    } catch (err) {
+      console.error('Failed to stop recording', err);
+      setIsRecording(false);
+    }
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) stopRecording();
+    else startRecording();
+  };
+
+  // ------------------ Animations ------------------
   useEffect(() => {
     if (isRecording) {
       const pulseAnimation = Animated.loop(
@@ -73,6 +141,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     }
   }, [isRecording]);
 
+  // ------------------ Task Logic ------------------
   const resetForm = () => {
     setTaskTitle('');
     setTaskDescription('');
@@ -89,33 +158,6 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     onClose();
   };
 
-  const formatDate = (date: Date) => {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    if (date.toDateString() === today.toDateString()) {
-      return 'Today';
-    } else if (date.toDateString() === tomorrow.toDateString()) {
-      return 'Tomorrow';
-    } else {
-      return date.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: date.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
-      });
-    }
-  };
-
-  const formatTime = (time: Date) => {
-    return time.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
-
   const getCombinedDateTime = () => {
     const combined = new Date(selectedDate);
     combined.setHours(selectedTime.getHours());
@@ -125,127 +167,57 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     return combined;
   };
 
- const handleAddTask = async () => {
-  if (!taskTitle.trim()) {
-    Alert.alert('Error', 'Please enter a task title');
-    return;
-  }
-
-  const scheduledDateTime = isScheduled ? getCombinedDateTime() : undefined;
-
-  const newTask = {
-    title: taskTitle.trim(),
-    description: taskDescription.trim(),
-    priority,
-    scheduled: isScheduled,
-    scheduledDate: scheduledDateTime,
-  };
-
-  try {
-    // 🔹 Save locally first
-    const savedTask = await TaskService.addTask(newTask);
-
-    // 🔹 Push to backend
-    try {
-      await fetch('http://localhost:5000/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(savedTask),
-      });
-    } catch (err) {
-      console.warn('Failed to sync task with backend', err);
-    }
-
-    // 🔹 Notify parent UI
-    onAddTask(savedTask);
-
-    // 🔹 Add to Calendar if scheduled
-    if (isScheduled && scheduledDateTime) {
-      try {
-        await CalendarService.addEvent(
-          savedTask.title,
-          savedTask.description,
-          scheduledDateTime.toISOString()
-        );
-        Alert.alert(
-          '✅ Added to Calendar',
-          `${savedTask.title} on ${formatDate(scheduledDateTime)} at ${formatTime(scheduledDateTime)}`
-        );
-      } catch (e) {
-        Alert.alert('⚠️ Failed to add to Calendar', String(e));
-      }
-    }
-
-    handleClose();
-  } catch (err) {
-    Alert.alert('Error', 'Failed to save task');
-  }
-};
-
-
-  // Recording logic (mock transcription)
-  const startRecording = async () => {
-    try {
-      if (Platform.OS === 'web') {
-        setIsRecording(true);
-        setTimeout(() => {
-          setIsRecording(false);
-          const mockTranscription = 'Meeting with John Friday at 2 PM';
-          setTaskTitle(mockTranscription);
-          setIsScheduled(true);
-          // Set to next Friday
-          const nextFriday = new Date();
-          const daysUntilFriday = (5 - nextFriday.getDay() + 7) % 7 || 7;
-          nextFriday.setDate(nextFriday.getDate() + daysUntilFriday);
-          setSelectedDate(nextFriday);
-          // Set time to 2 PM
-          const twoPM = new Date();
-          twoPM.setHours(14, 0, 0, 0);
-          setSelectedTime(twoPM);
-        }, 3000);
-        return;
-      }
-
-      const permission = await Audio.requestPermissionsAsync();
-      if (permission.status !== 'granted') return;
-
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecording(recording);
-      setIsRecording(true);
-    } catch (err) {
-      console.error('Failed to start recording', err);
-    }
-  };
-
-  const stopRecording = async () => {
-    if (!recording) {
-      setIsRecording(false);
+  const handleAddTask = async () => {
+    if (!taskTitle.trim()) {
+      Alert.alert('Error', 'Please enter a task title');
       return;
     }
 
-    setIsRecording(false);
-    setRecording(null);
-    await recording.stopAndUnloadAsync();
+    const scheduledDateTime = isScheduled ? getCombinedDateTime() : undefined;
 
-    // 🔹 Replace with real transcription service later
-    const mockTranscription = 'Meeting with John Friday at 2 PM';
-    setTaskTitle(mockTranscription);
-    setIsScheduled(true);
-    // Set to next Friday
-    const nextFriday = new Date();
-    const daysUntilFriday = (5 - nextFriday.getDay() + 7) % 7 || 7;
-    nextFriday.setDate(nextFriday.getDate() + daysUntilFriday);
-    setSelectedDate(nextFriday);
-    // Set time to 2 PM
-    const twoPM = new Date();
-    twoPM.setHours(14, 0, 0, 0);
-    setSelectedTime(twoPM);
-  };
+    const newTask = {
+      title: taskTitle.trim(),
+      description: taskDescription.trim(),
+      priority,
+      scheduled: isScheduled,
+      scheduledDate: scheduledDateTime,
+    };
 
-  const toggleRecording = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
+    try {
+      const savedTask = await TaskService.addTask(newTask);
+
+      try {
+        await fetch('http://192.168.1.3:5000/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(savedTask),
+        });
+      } catch (err) {
+        console.warn('Failed to sync task with backend', err);
+      }
+
+      onAddTask(savedTask);
+
+      if (isScheduled && scheduledDateTime) {
+        try {
+          await CalendarService.addEvent(
+            savedTask.title,
+            savedTask.description,
+            scheduledDateTime.toISOString()
+          );
+          Alert.alert(
+            '✅ Added to Calendar',
+            `${savedTask.title} on ${scheduledDateTime.toDateString()} at ${scheduledDateTime.toLocaleTimeString()}`
+          );
+        } catch (e) {
+          Alert.alert('⚠️ Failed to add to Calendar', String(e));
+        }
+      }
+
+      handleClose();
+    } catch (err) {
+      Alert.alert('Error', 'Failed to save task');
+    }
   };
 
   const getPriorityColor = (level: string) => {
@@ -258,23 +230,16 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
   };
 
   const onDateChange = (event: any, date?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowDatePicker(false);
-    }
-    if (date) {
-      setSelectedDate(date);
-    }
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (date) setSelectedDate(date);
   };
 
   const onTimeChange = (event: any, time?: Date) => {
-    if (Platform.OS === 'android') {
-      setShowTimePicker(false);
-    }
-    if (time) {
-      setSelectedTime(time);
-    }
+    if (Platform.OS === 'android') setShowTimePicker(false);
+    if (time) setSelectedTime(time);
   };
 
+  // ------------------ Render ------------------
   return (
     <Modal
       isVisible={isVisible}
@@ -296,7 +261,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
             </TouchableOpacity>
           </View>
 
-          {/* Voice Recording Section */}
+          {/* Voice Recording */}
           <View style={styles.voiceSection}>
             <Text style={styles.sectionLabel}>Voice Input</Text>
             <View style={styles.voiceContainer}>
@@ -313,10 +278,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
                 ]}
               >
                 <TouchableOpacity
-                  style={[
-                    styles.voiceButton,
-                    { backgroundColor: isRecording ? '#EF4444' : '#3B82F6' }
-                  ]}
+                  style={[styles.voiceButton, { backgroundColor: isRecording ? '#EF4444' : '#3B82F6' }]}
                   onPress={toggleRecording}
                 >
                   {isRecording ? <MicOff size={24} color="#fff" /> : <Mic size={24} color="#fff" />}
@@ -328,7 +290,7 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
             </View>
           </View>
 
-          {/* Manual Input Section */}
+          {/* Task Inputs */}
           <View style={styles.inputSection}>
             <Text style={styles.sectionLabel}>Task Details</Text>
             <TextInput
@@ -345,121 +307,23 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
               onChangeText={setTaskDescription}
               multiline
             />
-
             {/* Priority Selection */}
             <View style={styles.prioritySection}>
               <Text style={styles.sectionLabel}>Priority</Text>
               <View style={styles.priorityButtons}>
-                {(['high', 'medium', 'low'] as const).map((level) => (
+                {(['high','medium','low'] as const).map((level) => (
                   <TouchableOpacity
                     key={level}
-                    style={[
-                      styles.priorityButton,
-                      priority === level && { backgroundColor: getPriorityColor(level) + '20' }
-                    ]}
-                    onPress={() => setPriority(level)}
+                    style={[styles.priorityButton, priority===level && {backgroundColor:getPriorityColor(level)+'20'}]}
+                    onPress={()=>setPriority(level)}
                   >
                     <Flag size={16} color={getPriorityColor(level)} />
-                    <Text style={[styles.priorityText, { color: getPriorityColor(level) }]}>
-                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                    <Text style={[styles.priorityText,{color:getPriorityColor(level)}]}>
+                      {level.charAt(0).toUpperCase()+level.slice(1)}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-            </View>
-
-            {/* Schedule Section */}
-            <View style={styles.scheduleSection}>
-              <TouchableOpacity
-                style={styles.scheduleToggle}
-                onPress={() => setIsScheduled(!isScheduled)}
-              >
-                <Calendar size={20} color="#3B82F6" />
-                <Text style={styles.scheduleLabel}>Schedule this task</Text>
-                <View style={[styles.toggle, isScheduled && styles.toggleActive]}>
-                  <View style={[styles.toggleThumb, isScheduled && styles.toggleThumbActive]} />
-                </View>
-              </TouchableOpacity>
-
-              {/* Date and Time Pickers */}
-              {isScheduled && (
-                <View style={styles.dateTimeContainer}>
-                  {/* Date Picker Button */}
-                  <TouchableOpacity
-                    style={styles.dateTimeButton}
-                    onPress={() => setShowDatePicker(true)}
-                  >
-                    <View style={styles.dateTimeButtonContent}>
-                      <Calendar size={18} color="#3B82F6" />
-                      <Text style={styles.dateTimeButtonText}>
-                        {formatDate(selectedDate)}
-                      </Text>
-                      <ChevronDown size={18} color="#6B7280" />
-                    </View>
-                  </TouchableOpacity>
-
-                  {/* Time Picker Button */}
-                  <TouchableOpacity
-                    style={styles.dateTimeButton}
-                    onPress={() => setShowTimePicker(true)}
-                  >
-                    <View style={styles.dateTimeButtonContent}>
-                      <Clock size={18} color="#3B82F6" />
-                      <Text style={styles.dateTimeButtonText}>
-                        {formatTime(selectedTime)}
-                      </Text>
-                      <ChevronDown size={18} color="#6B7280" />
-                    </View>
-                  </TouchableOpacity>
-
-                  {/* Date Picker Modal */}
-                  {showDatePicker && (
-                    <DateTimePicker
-                      value={selectedDate}
-                      mode="date"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      onChange={onDateChange}
-                      minimumDate={new Date()}
-                      textColor="#000000"
-                      style={styles.dateTimePicker}
-                    />
-                  )}
-
-                  {/* Time Picker Modal */}
-                  {showTimePicker && (
-                    <DateTimePicker
-                      value={selectedTime}
-                      mode="time"
-                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                      onChange={onTimeChange}
-                      textColor="#000000"
-                      style={styles.dateTimePicker}
-                    />
-                  )}
-
-                  {/* iOS Date/Time Picker Close Buttons */}
-                  {Platform.OS === 'ios' && (showDatePicker || showTimePicker) && (
-                    <View style={styles.pickerCloseContainer}>
-                      <TouchableOpacity
-                        style={styles.pickerCloseButton}
-                        onPress={() => {
-                          setShowDatePicker(false);
-                          setShowTimePicker(false);
-                        }}
-                      >
-                        <Text style={styles.pickerCloseButtonText}>Done</Text>
-                      </TouchableOpacity>
-                    </View>
-                  )}
-
-                  {/* Selected DateTime Summary */}
-                  <View style={styles.dateTimeSummary}>
-                    <Text style={styles.dateTimeSummaryText}>
-                      Scheduled for: {formatDate(selectedDate)} at {formatTime(selectedTime)}
-                    </Text>
-                  </View>
-                </View>
-              )}
             </View>
           </View>
         </ScrollView>
@@ -477,6 +341,9 @@ export default function AddTaskModal({ isVisible, onClose, onAddTask }: AddTaskM
     </Modal>
   );
 }
+
+// Keep your styles as-is
+
 
 const styles = StyleSheet.create({
   modal: {

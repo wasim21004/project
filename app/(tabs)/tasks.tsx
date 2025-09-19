@@ -29,7 +29,7 @@ export default function TasksScreen() {
     'Inter-Bold': Inter_700Bold,
   });
 
-  const API_BASE = 'http://localhost:5000'; // Replace YOUR_PC_IP with your local machine IP
+  const API_BASE = 'http://192.168.1.3:5000'; // Replace YOUR_PC_IP with your local machine IP
 
   // Fetch tasks from backend
   const fetchTasks = async () => {
@@ -98,7 +98,7 @@ export default function TasksScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            const res = await fetch(`http://localhost:5000/tasks/${taskId}`, {
+            const res = await fetch(`http://192.168.1.3:5000/tasks/${taskId}`, {
               method: 'DELETE',
             });
 
