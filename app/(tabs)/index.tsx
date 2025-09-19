@@ -38,9 +38,6 @@ export default function HomeScreen() {
   const [pulseAnim] = useState(new Animated.Value(1));
   const [glowAnim] = useState(new Animated.Value(0));
   const [tasks, setTasks] = useState<Task[]>([
-    { id: '1', title: 'Review quarterly reports', completed: false, priority: 'high' },
-    { id: '2', title: 'Update project documentation', completed: false, priority: 'medium' },
-    { id: '3', title: 'Call insurance company', completed: false, priority: 'low' },
   ]);
 
   const [fontsLoaded] = useFonts({
@@ -51,10 +48,10 @@ export default function HomeScreen() {
 
   // Mock data
   const todayEvents: CalendarEvent[] = [
-    { id: '1', title: 'Team Standup', time: '9:00', duration: '30 min', color: '#3B82F6' },
-    { id: '2', title: 'Client Meeting', time: '11:30', duration: '1 hour', color: '#10B981' },
-    { id: '3', title: 'Lunch Break', time: '13:00', duration: '1 hour', color: '#F59E0B' },
-    { id: '4', title: 'Product Review', time: '15:00', duration: '45 min', color: '#8B5CF6' },
+    // { id: '1', title: 'Team Standup', time: '9:00', duration: '30 min', color: '#3B82F6' },
+    // { id: '2', title: 'Client Meeting', time: '11:30', duration: '1 hour', color: '#10B981' },
+    // { id: '3', title: 'Lunch Break', time: '13:00', duration: '1 hour', color: '#F59E0B' },
+    // { id: '4', title: 'Product Review', time: '15:00', duration: '45 min', color: '#8B5CF6' },
   ];
 
   const addTask = (newTask: Omit<Task, 'id' | 'completed'>) => {

@@ -25,11 +25,6 @@ interface Task {
 export default function TasksScreen() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([
-    { id: '1', title: 'Team Standup Meeting', completed: false, priority: 'high', scheduled: true, scheduledTime: 'Today 9:00 AM', description: 'Discuss daily progress' },
-    { id: '2', title: 'Client Presentation', completed: false, priority: 'high', scheduled: true, scheduledTime: 'Tomorrow 2:00 PM' },
-    { id: '3', title: 'Review quarterly reports', completed: false, priority: 'medium', scheduled: false },
-    { id: '4', title: 'Update project documentation', completed: false, priority: 'medium', scheduled: false },
-    { id: '5', title: 'Call insurance company', completed: true, priority: 'low', scheduled: false },
   ]);
 
   const [fontsLoaded] = useFonts({
